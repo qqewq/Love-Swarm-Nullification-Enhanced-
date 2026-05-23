@@ -1,3 +1,6 @@
+https://orcid.org/my-orcid?orcid=0009-0004-1872-1153
+https://doi.org/10.5281/zenodo.20356470
+------------
 # Love Swarm Nullification Enhanced  
 **Аланский кодекс: согласование мультиагентных систем через специализированную функцию потерь и иерархическую архитектуру**  
 **Alan Codex: Multi-Agent Alignment via Specialized Loss Function and Hierarchical Architecture**
