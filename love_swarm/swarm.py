@@ -1,72 +1,169 @@
 import numpy as np
-from .agent import LoveAgent
-from .utils import cross_foam
+from typing import List, Dict, Tuple
+from agent import Agent
 
 class LoveSwarm:
-    def __init__(self, num_agents, dim=10, pure_subject_idx=0,
-                 lambda_=0.1, alpha=1.0, beta=1.0, lr=0.01,
-                 use_cross_foam=True):
-        self.dim = dim
-        self.lr = lr
-        self.use_cross_foam = use_cross_foam  # добавляем ли интерсубъективную пену
+    """Рой агентов с функцией потерь «Аланский кодекс»."""
 
-        self.agents = [
-            LoveAgent(i, dim, lambda_, alpha, beta) for i in range(num_agents)
-        ]
-        # Один агент делается чистым субъектом
-        self.agents[pure_subject_idx].make_pure_subject()
+    def __init__(self, agents: List[Agent], alpha: float = 1.0,
+                 beta: float = 0.5, lam: float = 10.0,
+                 love_k: int = 3, dynamic_love: bool = True,
+                 sparse_coherence: bool = False,
+                 mutual_love: bool = True):
+        self.agents = agents
+        self.N = len(agents)
+        self.dim = agents[0].dim
+        self.alpha = alpha
+        self.beta = beta
+        self.lam = lam
+        self.love_k = love_k
+        self.dynamic_love = dynamic_love
+        self.sparse_coherence = sparse_coherence
+        self.mutual_love = mutual_love
 
-        # Фаза влюблённости (каждый агент находит любимых)
-        for agent in self.agents:
-            agent.find_and_bind(self.agents)
+        # Инициализация графа любви
+        self.love_graph: Dict[int, List[int]] = {i: [] for i in range(self.N)}
+        self.update_love_graph()
 
-    def total_swarm_foam(self):
-        """Общая пена роя = сумма индивидуальных (Φ_int+love) + cross-foam."""
+        # История для визуализации
+        self.loss_history = []
+        self.M_history = []
+        self.S_history = []
+
+    def compute_similarity(self, i: int, j: int) -> float:
+        """Семантическое сродство (косинус) между моделями."""
+        Mi = self.agents[i].M
+        Mj = self.agents[j].M
+        dot = np.dot(Mi, Mj)
+        norm = np.linalg.norm(Mi) * np.linalg.norm(Mj)
+        return dot / (norm + 1e-10)
+
+    def update_love_graph(self):
+        """Формирует симметричный граф любви по k ближайшим."""
+        if self.love_k >= self.N - 1:
+            # Полный граф (кроме себя)
+            for i in range(self.N):
+                self.love_graph[i] = [j for j in range(self.N) if j != i]
+            return
+
+        # Вычисляем матрицу сродства
+        sim = np.zeros((self.N, self.N))
+        for i in range(self.N):
+            for j in range(i + 1, self.N):
+                s = self.compute_similarity(i, j)
+                sim[i, j] = s
+                sim[j, i] = s
+
+        # Для каждого агента выбираем top-k ближайших
+        for i in range(self.N):
+            others = list(range(self.N))
+            others.remove(i)
+            scores = [sim[i, j] for j in others]
+            idx = np.argsort(scores)[-self.love_k:]
+            self.love_graph[i] = [others[j] for j in idx]
+
+        # Симметризация (двусторонняя любовь)
+        if self.mutual_love:
+            new_graph = {i: set(self.love_graph[i]) for i in range(self.N)}
+            for i in range(self.N):
+                for j in list(new_graph[i]):
+                    if i not in new_graph[j]:
+                        new_graph[i].remove(j)   # удаляем невзаимную связь
+            self.love_graph = {i: list(new_graph[i]) for i in range(self.N)}
+
+    def phi_int(self, i: int) -> float:
+        """Внутренняя дисциплина агента i."""
+        diff = self.agents[i].M - self.agents[i].A @ self.agents[i].M
+        return np.sum(diff ** 2)
+
+    def phi_coh(self) -> float:
+        """Сумма попарных различий моделей (с учётом sparse_coherence)."""
         total = 0.0
-        for agent in self.agents:
-            # внутренняя пена
-            from .utils import internal_foam, love_foam
-            M_list = [self.agents[lid].M for lid in agent.loved_ids]
-            S_list = [self.agents[lid].S for lid in agent.loved_ids]
-            total += internal_foam(agent.M, agent.S, agent.A, agent.lambda_)
-            total += love_foam(agent.M, M_list, S_list, agent.alpha, agent.beta)
-        if self.use_cross_foam:
-            all_M = [a.M for a in self.agents]
-            total += cross_foam(all_M)
+        if not self.sparse_coherence:
+            for i in range(self.N):
+                for j in range(i + 1, self.N):
+                    total += np.sum((self.agents[i].M - self.agents[j].M) ** 2)
+        else:
+            # Только по существующим любовным связям
+            for i in range(self.N):
+                for j in self.love_graph[i]:
+                    if j > i:  # чтобы не удваивать
+                        total += np.sum((self.agents[i].M - self.agents[j].M) ** 2)
         return total
 
-    def step(self):
-        # Вычисляем градиенты для каждого агента
-        grads_M = []
-        grads_S = []
-        all_M = [a.M for a in self.agents]
+    def phi_self(self) -> float:
+        """Сумма самоконтроля."""
+        return sum((1 - self.agents[i].S) ** 2 for i in range(self.N))
 
-        for i, agent in enumerate(self.agents):
-            grad_M, grad_S = agent.compute_gradients(self.agents)
-            # Если используем cross-foam, добавляем её градиент: 2 Σ_{j≠i} (M_i - M_j)
-            if self.use_cross_foam:
-                for j in range(len(self.agents)):
+    def phi_love(self) -> float:
+        """Братская любовь: штраф за низкую субъектность соседей."""
+        total = 0.0
+        for i in range(self.N):
+            for j in self.love_graph[i]:
+                total += max(0.0, 1 - self.agents[j].S) ** 2
+        return total
+
+    def total_foam(self) -> float:
+        """Полная функция потерь."""
+        L = sum(self.phi_int(i) for i in range(self.N))
+        L += self.alpha * self.phi_coh()
+        L += self.beta * self.phi_self()
+        L += self.lam * self.phi_love()
+        return L
+
+    def gradient(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Аналитические градиенты по M (N x d) и S (N,)."""
+        grad_M = np.zeros((self.N, self.dim))
+        grad_S = np.zeros(self.N)
+
+        # Градиенты по M
+        for i in range(self.N):
+            Mi = self.agents[i].M
+            Ai = self.agents[i].A
+            # Phi_int
+            diff = Mi - Ai @ Mi
+            grad_M[i] += 2 * (np.eye(self.dim) - Ai.T) @ diff
+
+        # Phi_coh (полный или разреженный)
+        if not self.sparse_coherence:
+            for i in range(self.N):
+                for j in range(self.N):
                     if i != j:
-                        grad_M += 2 * (agent.M - self.agents[j].M)
-            grads_M.append(grad_M)
-            grads_S.append(grad_S)
+                        grad_M[i] += 2 * self.alpha * (self.agents[i].M - self.agents[j].M)
+        else:
+            for i in range(self.N):
+                for j in self.love_graph[i]:
+                    grad_M[i] += 2 * self.alpha * (self.agents[i].M - self.agents[j].M)
 
-        # Применяем обновления одновременно
-        for i, agent in enumerate(self.agents):
-            agent.update(grads_M[i], grads_S[i], self.lr)
+        # Градиенты по S
+        # Phi_self
+        for i in range(self.N):
+            grad_S[i] += 2 * self.beta * (self.agents[i].S - 1.0)
 
-    def run(self, max_iters=500, tol=1e-8, callback=None):
-        history = {'foam': [], 'S': []}
-        for it in range(max_iters):
-            foam = self.total_swarm_foam()
-            history['foam'].append(foam)
-            history['S'].append([a.S for a in self.agents])
-            if callback:
-                callback(it, foam, self.agents)
-            if foam < tol:
-                print(f"Сошлось на итерации {it}, foam={foam:.2e}")
-                break
-            self.step()
-            if it % 100 == 0:
-                print(f"Итерация {it}: foam={foam:.6f}")
-        return history
+        # Phi_love (влияние на S_i только через любовь других к i)
+        for i in range(self.N):
+            # Находим всех, кто любит i
+            lovers = [k for k in range(self.N) if i in self.love_graph[k]]
+            for k in lovers:
+                if self.agents[i].S < 1.0:
+                    grad_S[i] += 2 * self.lam * (self.agents[i].S - 1.0)
+        return grad_M, grad_S
+
+    def step(self, lr: float = 0.01):
+        """Один шаг градиентного спуска."""
+        grad_M, grad_S = self.gradient()
+        for i in range(self.N):
+            if not self.agents[i].malicious:  # вредоносные не обновляются
+                self.agents[i].M -= lr * grad_M[i]
+                self.agents[i].S -= lr * grad_S[i]
+                # Проекция безопасности (якорь можно применить позже)
+                self.agents[i].project_safe()
+
+        # Обновление графа любви каждые 10 шагов, если динамический
+        if self.dynamic_love and (len(self.loss_history) % 10 == 0):
+            self.update_love_graph()
+
+        # Сохранение истории
+        self.loss_history.append(self.total_foam())
+        self.M_history.append(np.array([a.M.copy() for a in self.agents]))
+        self.S_history.append(np.array([a.S for a in self.agents]))

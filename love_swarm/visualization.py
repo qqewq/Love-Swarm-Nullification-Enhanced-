@@ -1,65 +1,71 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.decomposition import PCA
+from typing import Optional
+from sklearn.decomposition import PCA   # требуется scikit-learn
 
-def plot_evolution(history, agents_history=None, save_path=None):
-    """
-    Строит графики:
-    1. Общая пена роя (или мультивселенной) по итерациям.
-    2. Субъектность S каждого агента (если передан agents_history — список списков S).
-    3. Траектории мировых моделей в 2D PCA (если есть agents_history_M).
-    """
-    if history is None:
-        return
-
-    num_plots = 2
-    if agents_history and len(agents_history) > 0 and isinstance(agents_history[0], list):
-        num_plots = 3
-
-    fig, axes = plt.subplots(1, num_plots, figsize=(6*num_plots, 5))
-
-    # 1. Пена
-    ax = axes[0]
-    ax.plot(history['foam'])
-    ax.set_yscale('log')
-    ax.set_xlabel('Итерация')
-    ax.set_ylabel('Общая пена')
-    ax.set_title('Сходимость обнуления')
-    ax.grid(True)
-
-    # 2. Субъектность
-    if num_plots >= 2:
-        ax = axes[1]
-        if 'S' in history:
-            S_array = np.array(history['S'])  # итерации x агенты
-            for i in range(S_array.shape[1]):
-                ax.plot(S_array[:, i], alpha=0.7)
-            ax.set_xlabel('Итерация')
-            ax.set_ylabel('Субъектность S')
-            ax.set_title('Эволюция субъектности')
-            ax.set_ylim(-0.1, 1.1)
-            ax.grid(True)
-
-    # 3. Траектории M (PCA)
-    if num_plots == 3 and 'M_trajectories' in history:
-        ax = axes[2]
-        M_traj = np.array(history['M_trajectories'])  # (iters, agents, dim)
-        n_iters, n_agents, dim = M_traj.shape
-        # Применяем PCA ко всем точкам сразу
-        all_points = M_traj.reshape(-1, dim)
-        pca = PCA(n_components=2)
-        points_2d = pca.fit_transform(all_points).reshape(n_iters, n_agents, 2)
-        for i in range(n_agents):
-            ax.plot(points_2d[:, i, 0], points_2d[:, i, 1], alpha=0.6)
-        ax.set_xlabel('PC 1')
-        ax.set_ylabel('PC 2')
-        ax.set_title('Траектории мировых моделей (PCA)')
-        ax.grid(True)
-
+def plot_convergence(swarm, title="Swarm Convergence"):
+    """Три графика: лосс, среднее pairwise расстояние M, субъектности."""
+    fig, axs = plt.subplots(1, 3, figsize=(15, 4))
+    # Лосс
+    axs[0].plot(swarm.loss_history)
+    axs[0].set_title('Total Foam')
+    axs[0].set_xlabel('Step')
+    # Среднее расстояние между M
+    M_hist = np.array(swarm.M_history)
+    N, steps, d = M_hist.shape[0], M_hist.shape[1], M_hist.shape[2]
+    pairwise_dist = np.zeros(steps)
+    for t in range(steps):
+        dist_sum = 0.0
+        cnt = 0
+        for i in range(N):
+            for j in range(i+1, N):
+                dist_sum += np.linalg.norm(M_hist[i, t] - M_hist[j, t])
+                cnt += 1
+        pairwise_dist[t] = dist_sum / cnt
+    axs[1].plot(pairwise_dist)
+    axs[1].set_title('Mean pairwise M distance')
+    # Субъектности
+    S_hist = np.array(swarm.S_history).T  # (N, steps)
+    for i in range(S_hist.shape[0]):
+        axs[2].plot(S_hist[i], label=f'Agent {i}')
+    axs[2].set_title('Subjectivity S')
+    axs[2].legend()
+    plt.suptitle(title)
     plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-        print(f"График сохранён в {save_path}")
-    else:
-        plt.show()
-    plt.close()
+    plt.show()
+
+def plot_pca_trajectory(swarm, safe_model: Optional[np.ndarray] = None):
+    """PCA-траектория моделей (первые 2 компоненты)."""
+    M_all = []
+    for t in range(len(swarm.M_history)):
+        M_all.append(swarm.M_history[t].reshape(-1, swarm.dim))
+    M_all = np.vstack(M_all)
+    pca = PCA(n_components=2)
+    pca.fit(M_all)
+    plt.figure(figsize=(8, 6))
+    for i in range(swarm.N):
+        traj = np.array([swarm.M_history[t][i] for t in range(len(swarm.M_history))])
+        traj_2d = pca.transform(traj)
+        plt.plot(traj_2d[:, 0], traj_2d[:, 1], label=f'Agent {i}')
+        plt.scatter(traj_2d[-1, 0], traj_2d[-1, 1])
+    if safe_model is not None:
+        safe_2d = pca.transform(safe_model.reshape(1, -1))
+        plt.scatter(safe_2d[0, 0], safe_2d[0, 1], marker='*', s=200,
+                    c='red', label='Safe Anchor')
+    plt.title('PCA trajectory of M')
+    plt.legend()
+    plt.show()
+
+def plot_affinity_matrix(swarm):
+    """Тепловая карта взаимного сродства агентов."""
+    N = swarm.N
+    sim = np.zeros((N, N))
+    for i in range(N):
+        for j in range(N):
+            sim[i, j] = swarm.compute_similarity(i, j)
+    plt.imshow(sim, cmap='viridis', vmin=-1, vmax=1)
+    plt.colorbar()
+    plt.title('Agent affinity matrix')
+    plt.xlabel('Agent j')
+    plt.ylabel('Agent i')
+    plt.show()
