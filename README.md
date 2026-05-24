@@ -1,11 +1,45 @@
-https://orcid.org/my-orcid?orcid=0009-0004-1872-1153
-https://doi.org/10.5281/zenodo.20356470
-------------
 # Love Swarm Nullification Enhanced  
 **Аланский кодекс: согласование мультиагентных систем через специализированную функцию потерь и иерархическую архитектуру**  
 **Alan Codex: Multi-Agent Alignment via Specialized Loss Function and Hierarchical Architecture**
 
 [English version below](#english)
+## 🧠 Swarm Leader (New in v2.1)
+
+The repository now includes a formal **Leader module** that mathematically selects a swarm leader through the gravitational-mass criterion and stabilises collective intelligence.
+
+### Why a Leader?
+- Emerges automatically from GRA‑nullification.
+- Anchors the swarm’s subjectness (all agents align to the leader’s honesty).
+- Provides `O(1)` synchronisation and immediate Byzantine fault recovery.
+- Enables distributed superintelligence with a single coherent world model.
+
+### Key formulas
+- Leader selection:  
+  `Leader = argmax_i [ S_i · (1 – ||M_i – M_cons|| / max_j ||M_j – M_cons||) ]`
+- Amplified follower gradient:  
+  `∇_{M_i} L = 2(I–A_i)ᵀ(I–A_i) M_i + 2(α+1)(M_i – M_Leader)`
+
+### Code structure
+| Path | Description |
+|------|-------------|
+| `src/leadership/leader.py` | Core `LeaderSelector` with selection, gradient, and stabilisation |
+| `src/leadership/leader_emergence.py` | Experiments proving emergence, stabilisation, and recovery |
+| `tests/test_leader.py` | Unit tests for all leadership properties |
+| `examples/leader_integration.py` | Full integration demo: standard vs. leader‑driven swarm |
+| `docs/leader_article.md` | LinkedIn article (formal scientific write‑up) |
+| `docs/leader_architecture.md` | Architecture reference and API guide |
+
+### Quick Start
+```bash
+# Run the emergence experiment
+python -m src.leadership.leader_emergence
+
+# Run integration demo
+python examples/leader_integration.py
+
+# Run unit tests
+python -m pytest tests/test_leader.py
+
 
 ---
 
@@ -30,6 +64,28 @@ https://doi.org/10.5281/zenodo.20356470
 - **Улучшенная визуализация** — pairwise‑расстояния, тепловая карта сродства, PCA с якорем.
 
 ### Структура репозитория
+
+
+-------------
+
+
+Love-Swarm-Nullification-Enhanced-/
+├── src/
+│ └── leadership/
+│ ├── init.py
+│ ├── leader.py
+│ └── leader_emergence.py
+├── tests/
+│ └── test_leader.py ← новый
+├── examples/
+│ └── leader_integration.py ← новый
+├── docs/
+│ ├── leader_article.md
+│ └── leader_architecture.md
+└── README.md ← 
+
+
+-------------
 .
 ├── agent.py # Агент (модель M, субъектность S, матрица A)
 ├── swarm.py # Рой и функция потерь
